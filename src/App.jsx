@@ -1,7 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CameraScanner } from './components/CameraScanner'
 import { UnapecLogo } from './components/UnapecLogo.jsx'
+import { HomeWelcome } from './components/HomeWelcome.jsx'
+import { SessionActivePanel } from './components/SessionActivePanel.jsx'
+import { BookLoanResultPanel } from './components/BookLoanResultPanel.jsx'
 import { validarCarnet, validarLibro } from './api/loansApi'
+import { getUserFacingApiError } from './api/userFacingError.js'
 import { DevMockPanel } from './dev/DevMockPanel.jsx'
 import { MOCK_KOHA_SHORTCUT } from './dev/mockShortcuts.js'
 import './App.css'
@@ -14,23 +18,73 @@ const STEPS = {
   RESULTADO_LIBRO: 'resultado_libro',
 }
 
+/**
+ * @param {{ title: string, detail: string, codeLabel?: string }} props
+ */
+function PanelApiError({ title, detail, codeLabel }) {
+  return (
+    <div className="panel__alert panel__alert--error" role="alert">
+      <span className="panel__alert-icon" aria-hidden="true">
+        <svg
+          viewBox="0 0 24 24"
+          width="22"
+          height="22"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      </span>
+      <div className="panel__alert-body">
+        <strong className="panel__alert-title">
+          {title}
+          {codeLabel ? (
+            <span className="panel__alert-code-inline"> · {codeLabel}</span>
+          ) : null}
+        </strong>
+        <p className="panel__alert-detail">{detail}</p>
+      </div>
+    </div>
+  )
+}
+
 function App() {
+  const apiErrorBannerRef = useRef(null)
+
   const [step, setStep] = useState(STEPS.INICIO)
   const [cardScanKey, setCardScanKey] = useState(0)
   const [bookScanKey, setBookScanKey] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [cardError, setCardError] = useState('')
-  const [bookError, setBookError] = useState('')
+  /** @type {[{ title: string, detail: string, codeLabel?: string } | null, function]} */
+  const [cardError, setCardError] = useState(null)
+  /** @type {[{ title: string, detail: string, codeLabel?: string } | null, function]} */
+  const [bookError, setBookError] = useState(null)
   const [bookResult, setBookResult] = useState(null)
 
   /** @type {[{ patronId?: string, sessionToken?: string, displayName?: string } | null, function]} */
   const [kohaSession, setKohaSession] = useState(null)
 
+  useEffect(() => {
+    if (!cardError && !bookError) return
+    const id = requestAnimationFrame(() => {
+      apiErrorBannerRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [cardError, bookError])
+
   const goInicio = () => {
     setStep(STEPS.INICIO)
     setKohaSession(null)
-    setCardError('')
-    setBookError('')
+    setCardError(null)
+    setBookError(null)
     setBookResult(null)
     setCardScanKey((k) => k + 1)
     setBookScanKey((k) => k + 1)
@@ -39,24 +93,24 @@ function App() {
   const handleCardCapture = useCallback(
     async ({ barcodeText, imageBlob }) => {
       setLoading(true)
-      setCardError('')
+      setCardError(null)
       try {
         const data = await validarCarnet({
           imageBlob,
-          codigoBarras: barcodeText,
+          codigoBarras: barcodeText ?? '',
         })
         if (data.valid && data.koha?.sessionToken) {
           setKohaSession(data.koha)
           setStep(STEPS.SESION)
         } else {
-          setCardError(
-            data.message ||
-              'Carnet no válido o sin permisos. Verifique con biblioteca.',
-          )
+          setCardError({
+            title: 'No se pudo verificar el carnet',
+            detail: data.message || 'Revise los datos o consulte en biblioteca.',
+          })
           setCardScanKey((k) => k + 1)
         }
       } catch (e) {
-        setCardError(e.message || 'Error al validar el carnet.')
+        setCardError(getUserFacingApiError(e, 'carnet'))
         setCardScanKey((k) => k + 1)
       } finally {
         setLoading(false)
@@ -69,17 +123,17 @@ function App() {
     async ({ barcodeText, imageBlob }) => {
       if (!kohaSession?.sessionToken) return
       setLoading(true)
-      setBookError('')
+      setBookError(null)
       try {
         const data = await validarLibro({
           imageBlob,
-          codigoBarras: barcodeText,
+          codigoBarras: barcodeText ?? '',
           sessionToken: kohaSession.sessionToken,
         })
         setBookResult(data)
         setStep(STEPS.RESULTADO_LIBRO)
       } catch (e) {
-        setBookError(e.message || 'Error al procesar el préstamo.')
+        setBookError(getUserFacingApiError(e, 'libro'))
         setBookScanKey((k) => k + 1)
       } finally {
         setLoading(false)
@@ -89,21 +143,21 @@ function App() {
   )
 
   const goEscanearCarnetDev = useCallback(() => {
-    setCardError('')
+    setCardError(null)
     setKohaSession(null)
     setStep(STEPS.ESCANEAR_CARNET)
     setCardScanKey((k) => k + 1)
   }, [])
 
   const goSesionMockDev = useCallback(() => {
-    setCardError('')
+    setCardError(null)
     setKohaSession({ ...MOCK_KOHA_SHORTCUT })
     setStep(STEPS.SESION)
   }, [])
 
   const goEscanearLibroDev = useCallback(() => {
     setKohaSession((prev) => prev ?? { ...MOCK_KOHA_SHORTCUT })
-    setBookError('')
+    setBookError(null)
     setBookResult(null)
     setStep(STEPS.ESCANEAR_LIBRO)
     setBookScanKey((k) => k + 1)
@@ -140,7 +194,7 @@ function App() {
             <span className="app__brand-divider" aria-hidden="true" />
             <div className="app__titles">
               <h1 className="app__brand">Autopréstamos</h1>
-              <p className="app__tagline">Biblioteca · integración Koha</p>
+              <p className="app__tagline">Biblioteca UNAPEC</p>
             </div>
           </div>
         </div>
@@ -149,23 +203,13 @@ function App() {
       <main className="app__main">
         {step === STEPS.INICIO && (
           <section className="panel panel--home">
-            <h2 className="panel__title">Bienvenido</h2>
-            <p className="panel__text">
-              Use el lector para identificarse con su carnet y solicitar un
-              libro. El backend consultará Koha (disponibilidad, límites y
-              sanciones).
-            </p>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => {
-                setCardError('')
+            <HomeWelcome
+              onStart={() => {
+                setCardError(null)
                 setStep(STEPS.ESCANEAR_CARNET)
                 setCardScanKey((k) => k + 1)
               }}
-            >
-              Préstamos
-            </button>
+            />
           </section>
         )}
 
@@ -173,24 +217,27 @@ function App() {
           <section className="panel">
             <CameraScanner
               key={cardScanKey}
-              title="Carnet de estudiante"
-              instruction="Coloque el código de barras del carnet (Cardnet) frente a la cámara. Si no lo detecta solo, use «Capturar foto y leer código» cuando lo vea nítido, o escriba el número abajo. La imagen y el código se envían al servidor para validar."
+              title="Identificación"
+              instruction="Encuadre el carnet y pulse «Capturar y enviar foto». El servidor procesará la imagen."
+              manualSectionTitle="¿Sin cámara o no se ve el carnet?"
+              manualEntryLabel="Escriba el número o código de su carnet y pulse Continuar"
+              visualVariant="carnet"
               onCapture={handleCardCapture}
               busy={loading}
             />
             {loading && (
               <p className="panel__loading" aria-live="polite">
-                Validando carnet con el servidor…
+                Verificando carnet…
               </p>
             )}
             {cardError && (
-              <p className="panel__error" role="alert">
-                {cardError}
-              </p>
+              <div ref={apiErrorBannerRef}>
+                <PanelApiError {...cardError} />
+              </div>
             )}
             <div className="panel__actions">
               <button type="button" className="btn btn--ghost" onClick={goInicio}>
-                Volver al inicio
+                Inicio
               </button>
               {!loading && (
                 <button
@@ -198,7 +245,7 @@ function App() {
                   className="btn btn--secondary"
                   onClick={() => setCardScanKey((k) => k + 1)}
                 >
-                  Reintentar escaneo
+                  Volver a tomar foto
                 </button>
               )}
             </div>
@@ -206,36 +253,18 @@ function App() {
         )}
 
         {step === STEPS.SESION && kohaSession && (
-          <section className="panel">
-            <h2 className="panel__title">Sesión activa</h2>
-            <p className="panel__text">
-              {kohaSession.displayName
-                ? `Hola, ${kohaSession.displayName}.`
-                : 'Carnet verificado correctamente.'}{' '}
-              Los datos de Koha ya están asociados a esta sesión en el servidor.
-            </p>
-            {kohaSession.patronId && (
-              <p className="panel__meta">
-                ID usuario Koha: <code>{kohaSession.patronId}</code>
-              </p>
-            )}
-            <div className="panel__actions panel__actions--stack">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  setBookError('')
-                  setBookResult(null)
-                  setStep(STEPS.ESCANEAR_LIBRO)
-                  setBookScanKey((k) => k + 1)
-                }}
-              >
-                Pedir un libro
-              </button>
-              <button type="button" className="btn btn--ghost" onClick={goInicio}>
-                Cerrar y volver al inicio
-              </button>
-            </div>
+          <section className="panel panel--session">
+            <SessionActivePanel
+              displayName={kohaSession.displayName}
+              patronId={kohaSession.patronId}
+              onPedirLibro={() => {
+                setBookError(null)
+                setBookResult(null)
+                setStep(STEPS.ESCANEAR_LIBRO)
+                setBookScanKey((k) => k + 1)
+              }}
+              onSalir={goInicio}
+            />
           </section>
         )}
 
@@ -243,20 +272,23 @@ function App() {
           <section className="panel">
             <CameraScanner
               key={bookScanKey}
-              title="Código del libro"
-              instruction="Coloque el código de barras del ejemplar frente a la cámara. Puede usar «Capturar foto y leer código» o el ingreso manual si hace falta. El servidor validará disponibilidad, cupo y sanciones en Koha."
+              title="Ejemplar"
+              instruction="Encuadre el libro o el código del ejemplar y pulse «Capturar y enviar foto»."
+              manualSectionTitle="¿Sin cámara o no se ve el código del libro?"
+              manualEntryLabel="Escriba el código de barras o inventario del ejemplar y pulse Continuar"
+              visualVariant="libro"
               onCapture={handleBookCapture}
               busy={loading}
             />
             {loading && (
               <p className="panel__loading" aria-live="polite">
-                Validando libro y reglas de préstamo…
+                Registrando préstamo…
               </p>
             )}
             {bookError && (
-              <p className="panel__error" role="alert">
-                {bookError}
-              </p>
+              <div ref={apiErrorBannerRef}>
+                <PanelApiError {...bookError} />
+              </div>
             )}
             <div className="panel__actions">
               <button
@@ -272,7 +304,7 @@ function App() {
                   className="btn btn--secondary"
                   onClick={() => setBookScanKey((k) => k + 1)}
                 >
-                  Reintentar escaneo
+                  Volver a tomar foto
                 </button>
               )}
             </div>
@@ -280,44 +312,17 @@ function App() {
         )}
 
         {step === STEPS.RESULTADO_LIBRO && bookResult && (
-          <section className="panel">
-            <h2 className="panel__title">
-              {bookResult.valid ? 'Préstamo autorizado' : 'No se pudo prestar'}
-            </h2>
-            <p className="panel__text">
-              {bookResult.message ||
-                (bookResult.valid
-                  ? 'El ejemplar quedó registrado como prestado.'
-                  : 'Revise el mensaje o consulte en mostrador.')}
-            </p>
-            {bookResult.libro?.titulo && (
-              <p className="panel__meta">
-                Libro: <strong>{bookResult.libro.titulo}</strong>
-              </p>
-            )}
-            <div className="panel__actions panel__actions--stack">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  setBookResult(null)
-                  setStep(STEPS.ESCANEAR_LIBRO)
-                  setBookScanKey((k) => k + 1)
-                }}
-              >
-                Otro libro
-              </button>
-              <button
-                type="button"
-                className="btn btn--secondary"
-                onClick={() => setStep(STEPS.SESION)}
-              >
-                Volver al menú de sesión
-              </button>
-              <button type="button" className="btn btn--ghost" onClick={goInicio}>
-                Inicio
-              </button>
-            </div>
+          <section className="panel panel--book-result">
+            <BookLoanResultPanel
+              result={bookResult}
+              onOtroLibro={() => {
+                setBookResult(null)
+                setStep(STEPS.ESCANEAR_LIBRO)
+                setBookScanKey((k) => k + 1)
+              }}
+              onVolverSesion={() => setStep(STEPS.SESION)}
+              onInicio={goInicio}
+            />
           </section>
         )}
       </main>

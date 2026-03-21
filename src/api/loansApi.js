@@ -2,12 +2,12 @@
  * Contrato esperado con el backend (Koha / capa intermedia).
  *
  * POST /api/prestamos/validar-carnet
- *   multipart: foto (image/jpeg), codigoBarras (texto leído del carnet, si aplica)
+ *   multipart: foto (image/jpeg), codigoBarras (texto leído; puede ir vacío si el servidor decodifica solo la imagen)
  *   200: { valid: boolean, message?: string, koha?: { patronId, sessionToken, displayName?, ... } }
  *
  * POST /api/prestamos/validar-libro
  *   headers: Authorization: Bearer <sessionToken> (o el esquema que defina tu API)
- *   multipart: foto, codigoBarras
+ *   multipart: foto, codigoBarras (vacío permitido si el backend lee el código desde la foto)
  *   200: { valid: boolean, message?: string, libro?: { titulo?, itemNumber?, ... } }
  */
 
@@ -32,6 +32,7 @@ async function parseJsonResponse(res) {
 
 /**
  * @param {{ imageBlob: Blob, codigoBarras: string, signal?: AbortSignal }} opts
+ *   `codigoBarras` puede ser '' si no hay texto legible; el servidor debe intentar leer la foto.
  */
 export async function validarCarnet({ imageBlob, codigoBarras, signal }) {
   if (isMockApiEnabled()) {
@@ -40,7 +41,7 @@ export async function validarCarnet({ imageBlob, codigoBarras, signal }) {
 
   const fd = new FormData()
   fd.append('foto', imageBlob, 'carnet.jpg')
-  fd.append('codigoBarras', codigoBarras)
+  fd.append('codigoBarras', codigoBarras ?? '')
 
   const res = await fetch(apiUrl('/api/prestamos/validar-carnet'), {
     method: 'POST',
@@ -60,6 +61,7 @@ export async function validarCarnet({ imageBlob, codigoBarras, signal }) {
 
 /**
  * @param {{ imageBlob: Blob, codigoBarras: string, sessionToken: string, signal?: AbortSignal }} opts
+ *   `codigoBarras` puede ser '' si no hay texto legible; el servidor debe intentar leer la foto.
  */
 export async function validarLibro({
   imageBlob,
@@ -78,7 +80,7 @@ export async function validarLibro({
 
   const fd = new FormData()
   fd.append('foto', imageBlob, 'libro.jpg')
-  fd.append('codigoBarras', codigoBarras)
+  fd.append('codigoBarras', codigoBarras ?? '')
 
   const res = await fetch(apiUrl('/api/prestamos/validar-libro'), {
     method: 'POST',

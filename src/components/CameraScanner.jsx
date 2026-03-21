@@ -1,58 +1,55 @@
 import { useCallback, useEffect, useRef, useState, startTransition } from 'react'
-import {
-  BrowserMultiFormatReader,
-  BrowserCodeReader,
-} from '@zxing/browser'
-import { BarcodeFormat, DecodeHintType } from '@zxing/library'
-
-const SCAN_TIPS = [
-  'Pulse «Capturar foto» cuando el código esté nítido: suele leer mejor que en video en vivo.',
-  'Mantenga el carnet firme, paralelo a la cámara y con buena luz.',
-  'Aleje o acerque hasta que las barras ocupen buena parte del recuadro.',
-  'Evite reflejos en el plástico; incline un poco el carnet si hace falta.',
-  'Si no lee, escriba el número del código y pulse Continuar (con o sin foto guardada).',
-]
-
-/** Más formatos + TRY_HARDER: carnets y libros varían mucho entre instituciones */
-const BARCODE_HINTS = new Map([
-  [DecodeHintType.TRY_HARDER, true],
-  [
-    DecodeHintType.POSSIBLE_FORMAT,
-    [
-      BarcodeFormat.QR_CODE,
-      BarcodeFormat.DATA_MATRIX,
-      BarcodeFormat.PDF_417,
-      BarcodeFormat.AZTEC,
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.CODE_93,
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-      BarcodeFormat.ITF,
-      BarcodeFormat.CODABAR,
-      BarcodeFormat.UPC_A,
-      BarcodeFormat.UPC_E,
-    ],
-  ],
-])
 
 const VIDEO_CONSTRAINTS = {
   video: {
-    facingMode: 'environment',
+    facingMode: { ideal: 'environment' },
     width: { ideal: 1920, min: 480 },
     height: { ideal: 1080, min: 360 },
   },
 }
 
-/** JPEG en algunos navegadores falla con dimensiones impares */
+/** JPEG / canvas: algunos navegadores fallan con dimensiones impares */
 function evenDimension(n) {
   const x = Math.floor(Number(n)) || 0
   if (x < 2) return 2
   return x - (x % 2)
 }
 
+async function openCameraStream() {
+  const attempts = [
+    () => navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS),
+    () => navigator.mediaDevices.getUserMedia({ video: true }),
+  ]
+  let lastErr
+  for (const fn of attempts) {
+    try {
+      return await fn()
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
+
+function stopCamera(videoEl) {
+  const s = videoEl?.srcObject
+  if (s instanceof MediaStream) {
+    for (const t of s.getTracks()) t.stop()
+  }
+  if (videoEl) videoEl.srcObject = null
+}
+
+async function playVideo(video) {
+  if (!video) return
+  try {
+    await video.play()
+  } catch {
+    /* política de autoplay: el usuario puede pulsar «Capturar» o recargar */
+  }
+}
+
 /**
- * Edge suele fallar con canvas.toBlob desde video HD; el driver entrega JPEG con takePhoto().
+ * Edge suele fallar con canvas.toBlob desde video HD; el driver entrega PNG/JPEG con takePhoto().
  */
 async function blobViaImageCapture(video) {
   const stream = video?.srcObject
@@ -95,24 +92,6 @@ async function blobViaImageCapture(video) {
   }
 }
 
-async function decodeTextFromImageBlob(reader, blob) {
-  if (!blob || !reader) return null
-  const url = URL.createObjectURL(blob)
-  try {
-    const result = await reader.decodeFromImageUrl(url)
-    const t = result?.getText?.()
-    return t || null
-  } catch {
-    return null
-  } finally {
-    URL.revokeObjectURL(url)
-  }
-}
-
-/**
- * Convierte el canvas a Blob en el navegador (no llama al servidor).
- * Algunos entornos devuelven null con JPEG o canvas muy grandes; probamos alternativas.
- */
 async function canvasToBlob(canvas, jpegQuality = 0.92) {
   if (!canvas?.width || !canvas?.height) {
     throw new Error('Dimensiones de imagen inválidas.')
@@ -183,6 +162,105 @@ async function canvasToBlob(canvas, jpegQuality = 0.92) {
   throw new Error('CANVAS_BLOB_FAILED')
 }
 
+async function manualPlaceholderBlob(codigo) {
+  const c = document.createElement('canvas')
+  c.width = 640
+  c.height = 480
+  const ctx = c.getContext('2d')
+  if (!ctx) throw new Error('No se pudo preparar la imagen.')
+  ctx.fillStyle = '#f4f4f5'
+  ctx.fillRect(0, 0, 640, 480)
+  ctx.fillStyle = '#374151'
+  ctx.font = '20px system-ui, sans-serif'
+  ctx.fillText('Registro manual (sin foto de cámara)', 24, 44)
+  ctx.font = '18px ui-monospace, monospace'
+  const line = codigo.trim().slice(0, 64)
+  ctx.fillText(line || '(vacío)', 24, 88)
+  return canvasToBlob(c, 0.85)
+}
+
+/** Consejos según paso del flujo (misma línea visual que sesión / resultado). */
+const CONTEXT_TIPS = {
+  carnet: [
+    { head: 'Encuadre', body: 'Centre el carnet dentro del marco turquesa.' },
+    { head: 'Luz', body: 'Evite sombras fuertes y reflejos en el plástico.' },
+  ],
+  libro: [
+    { head: 'Código', body: 'Enfoque la etiqueta o el código del lomo o contraportada.' },
+    { head: 'Nitidez', body: 'Si va borroso, use «Capturar y enviar foto».' },
+  ],
+}
+
+function ScannerVisualBadge({ variant }) {
+  const cls = 'camera-scanner__badge'
+  if (variant === 'carnet') {
+    return (
+      <div className={cls} aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none">
+          <rect
+            x="3"
+            y="5"
+            width="18"
+            height="14"
+            rx="2"
+            stroke="currentColor"
+            strokeWidth="1.75"
+          />
+          <circle cx="9" cy="12" r="2.25" stroke="currentColor" strokeWidth="1.5" />
+          <path
+            d="M14 10h4M14 13h3"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    )
+  }
+  if (variant === 'libro') {
+    return (
+      <div className={cls} aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none">
+          <path
+            d="M5 4h12a2 2 0 012 2v13a1 1 0 01-1 1H6a2 2 0 01-2-2V4z"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M5 4v14a2 2 0 002 2h11"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+          />
+          <path
+            d="M9 8h6M9 12h5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    )
+  }
+  return (
+    <div className={`${cls} camera-scanner__badge--default`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="none">
+        <rect
+          x="3"
+          y="6"
+          width="18"
+          height="12"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.75"
+        />
+        <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    </div>
+  )
+}
+
 async function captureFrameBlob(video) {
   const w0 = video.videoWidth
   const h0 = video.videoHeight
@@ -204,36 +282,6 @@ async function captureFrameBlob(video) {
   return canvasToBlob(canvas, 0.92)
 }
 
-async function manualPlaceholderBlob(codigo) {
-  const c = document.createElement('canvas')
-  c.width = 640
-  c.height = 480
-  const ctx = c.getContext('2d')
-  if (!ctx) throw new Error('No se pudo preparar la imagen.')
-  ctx.fillStyle = '#f4f4f5'
-  ctx.fillRect(0, 0, 640, 480)
-  ctx.fillStyle = '#374151'
-  ctx.font = '20px system-ui, sans-serif'
-  ctx.fillText('Entrada manual (sin foto de cámara)', 24, 44)
-  ctx.font = '18px ui-monospace, monospace'
-  const line = codigo.trim().slice(0, 64)
-  ctx.fillText(line || '(vacío)', 24, 88)
-  return canvasToBlob(c, 0.85)
-}
-
-function stopCamera(videoEl) {
-  BrowserCodeReader.releaseAllStreams()
-  if (videoEl) BrowserCodeReader.cleanVideoSource(videoEl)
-}
-
-async function attachReaderStream(reader, video, callback) {
-  try {
-    return await reader.decodeFromConstraints(VIDEO_CONSTRAINTS, video, callback)
-  } catch {
-    return reader.decodeFromVideoDevice(undefined, video, callback)
-  }
-}
-
 /**
  * @param {{
  *   title: string,
@@ -241,6 +289,9 @@ async function attachReaderStream(reader, video, callback) {
  *   onCapture: (p: { barcodeText: string, imageBlob: Blob }) => void,
  *   busy?: boolean,
  *   showManualEntry?: boolean,
+ *   manualSectionTitle?: string,
+ *   manualEntryLabel?: string,
+ *   visualVariant?: 'carnet' | 'libro',
  * }} props
  */
 export function CameraScanner({
@@ -249,394 +300,219 @@ export function CameraScanner({
   onCapture,
   busy = false,
   showManualEntry = true,
+  manualSectionTitle = '¿Sin cámara o no se ve bien?',
+  manualEntryLabel = 'Escriba el código y pulse Continuar',
+  visualVariant,
 }) {
   const videoRef = useRef(null)
   const onCaptureRef = useRef(onCapture)
-  const lockedRef = useRef(false)
-  const scanControlsRef = useRef(null)
-  const readerRef = useRef(null)
-  const restartDecodeRef = useRef(async () => {})
 
   const [phase, setPhase] = useState('idle')
   const [error, setError] = useState('')
   const [cameraReady, setCameraReady] = useState(false)
-  const [lastRead, setLastRead] = useState('')
-  const [tipIdx, setTipIdx] = useState(0)
+  const [captureBusy, setCaptureBusy] = useState(false)
+  const [manualBusy, setManualBusy] = useState(false)
+  const [statusLine, setStatusLine] = useState('')
   const [manualCode, setManualCode] = useState('')
-  const [stalePhotoBlob, setStalePhotoBlob] = useState(null)
-  const [shutterHint, setShutterHint] = useState('')
-  const [shutterBusy, setShutterBusy] = useState(false)
-  /** Mensaje inmediato al pulsar capturar (éxito/error de lectura en foto) */
-  const [shutterStatus, setShutterStatus] = useState('')
 
   useEffect(() => {
     onCaptureRef.current = onCapture
   }, [onCapture])
 
   useEffect(() => {
-    if (phase !== 'scanning') return
-    const id = window.setInterval(
-      () => setTipIdx((i) => (i + 1) % SCAN_TIPS.length),
-      4500,
-    )
-    return () => window.clearInterval(id)
-  }, [phase])
-
-  useEffect(() => {
     if (busy) return
 
-    const hostVideo = videoRef.current
     let cancelled = false
-    lockedRef.current = false
+
     startTransition(() => {
       setCameraReady(false)
-      setLastRead('')
-      setTipIdx(0)
-      setStalePhotoBlob(null)
-      setShutterHint('')
-      setShutterStatus('')
+      setCaptureBusy(false)
+      setManualBusy(false)
+      setStatusLine('')
       setPhase('starting')
       setError('')
     })
 
-    const reader = new BrowserMultiFormatReader(BARCODE_HINTS)
-    readerRef.current = reader
-
-    async function handleDecoded(text, controls) {
+    ;(async () => {
       try {
-        await new Promise((r) => requestAnimationFrame(r))
-        const v = videoRef.current
-        const blob = await captureFrameBlob(v)
-        if (cancelled) return
-        controls.stop()
-        scanControlsRef.current = null
-        stopCamera(v)
-        setStalePhotoBlob(null)
-        setShutterHint('')
-        setPhase('done')
-        onCaptureRef.current({ barcodeText: text, imageBlob: blob })
-      } catch (e) {
-        setShutterHint('')
-        controls.stop()
-        scanControlsRef.current = null
-        stopCamera(videoRef.current)
-        if (cancelled) return
-        lockedRef.current = false
-        setPhase('error')
-        setError(
-          e?.message ||
-            'Se leyó el código pero falló la foto. Reintente o use entrada manual.',
-        )
-      }
-    }
-
-    const streamCallback = (result, _err, controls) => {
-      if (cancelled || !result || lockedRef.current) return
-      lockedRef.current = true
-      const text = result.getText()
-      if (!text) {
-        lockedRef.current = false
-        return
-      }
-      setLastRead(text)
-      setPhase('detected')
-      void handleDecoded(text, controls)
-    }
-
-    restartDecodeRef.current = async () => {
-      if (cancelled || lockedRef.current) return false
-      const video = videoRef.current
-      if (!video) return false
-      scanControlsRef.current?.stop()
-      scanControlsRef.current = null
-      await new Promise((r) => window.setTimeout(r, 120))
-      try {
-        const ctrl = await attachReaderStream(reader, video, streamCallback)
+        const stream = await openCameraStream()
         if (cancelled) {
-          ctrl?.stop()
-          return false
-        }
-        scanControlsRef.current = ctrl
-        return true
-      } catch (e) {
-        if (import.meta.env.DEV) {
-          console.warn('[CameraScanner] No se pudo reanudar el escaneo', e)
-        }
-        return false
-      }
-    }
-
-    async function boot() {
-      const video = videoRef.current
-      if (!video || cancelled) return
-
-      setPhase('scanning')
-
-      try {
-        const ctrl = await attachReaderStream(reader, video, streamCallback)
-        if (cancelled) {
-          ctrl?.stop()
+          for (const t of stream.getTracks()) t.stop()
           return
         }
-        scanControlsRef.current = ctrl
+        const video = videoRef.current
+        if (!video) {
+          for (const t of stream.getTracks()) t.stop()
+          return
+        }
+        video.srcObject = stream
+        await playVideo(video)
+        if (cancelled) return
+        setPhase('live')
       } catch (e) {
         if (cancelled) return
         stopCamera(videoRef.current)
         const msg =
           e?.name === 'NotAllowedError'
-            ? 'Permita el acceso a la cámara para continuar.'
+            ? 'Permita el acceso a la cámara en el navegador.'
             : e?.message ||
-              'No se pudo abrir la cámara. Compruebe permisos y que no la use otra app.'
+              'No se pudo abrir la cámara. Revise permisos o cierre otras apps que la usen.'
         setError(msg)
         setPhase('error')
       }
-    }
-
-    const startId = window.setTimeout(() => {
-      if (!cancelled) void boot()
-    }, 0)
+    })()
 
     return () => {
       cancelled = true
-      window.clearTimeout(startId)
-      readerRef.current = null
-      restartDecodeRef.current = async () => {}
-      scanControlsRef.current?.stop()
-      scanControlsRef.current = null
-      stopCamera(hostVideo)
+      stopCamera(videoRef.current)
     }
   }, [busy])
 
-  const handleManualShutter = useCallback(async () => {
-    if (busy || lockedRef.current) {
-      setShutterStatus(
-        busy
-          ? 'Espere a que termine la petición al servidor.'
-          : 'Ya hay una lectura en curso.',
-      )
+  const handleCapture = useCallback(async () => {
+    if (busy || captureBusy) {
+      setStatusLine(busy ? 'Espere a que termine el envío.' : 'Capturando…')
       return
     }
-    if (shutterBusy) return
-
     const video = videoRef.current
-    const reader = readerRef.current
-
-    if (!reader) {
-      setShutterStatus('El lector aún no está listo; espere un segundo e intente de nuevo.')
+    if (!video?.srcObject) {
+      setStatusLine('Cámara no disponible.')
       return
     }
-    if (!video) {
-      setShutterStatus('No hay vista de cámara.')
-      return
-    }
-
     const hasFrame =
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth >= 8
-
     if (!hasFrame) {
-      setShutterStatus(
-        'La imagen aún no está lista (sin fotogramas). Espere a ver el video nítido y pulse de nuevo.',
-      )
+      setStatusLine('Espere a que se vea la imagen y vuelva a intentar.')
       return
     }
 
-    setShutterBusy(true)
-    setShutterHint('')
+    setCaptureBusy(true)
+    setStatusLine('')
     setError('')
-
-    scanControlsRef.current?.stop()
-    scanControlsRef.current = null
 
     await new Promise((r) => requestAnimationFrame(r))
 
-    setShutterStatus(
-      'Capturando foto (usa la cámara del sistema en Edge; evita fallos del lienzo)…',
-    )
-
-    let blob = await blobViaImageCapture(video)
-    let text = null
-
-    if (blob) {
-      setShutterStatus('Buscando código de barras en la foto…')
-      text = await decodeTextFromImageBlob(reader, blob)
-    }
-
-    if (blob && text) {
-      lockedRef.current = true
-      setLastRead(text)
-      setStalePhotoBlob(null)
-      setShutterStatus('Código leído correctamente.')
-      setPhase('detected')
+    try {
+      const blob = await captureFrameBlob(video)
+      if (!blob?.size) throw new Error('No se generó la imagen.')
       stopCamera(video)
       setPhase('done')
-      onCaptureRef.current({ barcodeText: text, imageBlob: blob })
-      setShutterBusy(false)
-      return
-    }
-
-    if (blob && !text) {
-      setStalePhotoBlob(blob)
-      setShutterStatus('')
-      setShutterHint(
-        'Foto tomada con la cámara, pero no se leyó el código. Escriba el número abajo y pulse Continuar (se enviará esta imagen), o pulse «Otra foto».',
-      )
-      setPhase('scanning')
-      const ok = await restartDecodeRef.current()
-      if (!ok) {
-        setError(
-          'Foto guardada, pero la cámara no se reactivó. Pulse «Continuar» con el código escrito, o recargue la página.',
-        )
-      }
-      setShutterBusy(false)
-      return
-    }
-
-    const ew = evenDimension(video.videoWidth)
-    const eh = evenDimension(video.videoHeight)
-    const canvas = document.createElement('canvas')
-    canvas.width = ew
-    canvas.height = eh
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      setShutterStatus('No se pudo preparar la imagen en este dispositivo.')
-      setShutterBusy(false)
-      await restartDecodeRef.current()
-      return
-    }
-    ctx.drawImage(video, 0, 0, ew, eh)
-
-    try {
-      blob = await canvasToBlob(canvas, 0.95)
+      onCaptureRef.current({ barcodeText: '', imageBlob: blob })
     } catch (e) {
       const isBrowser =
         e?.message === 'CANVAS_BLOB_FAILED' ||
         e?.message === 'Dimensiones de imagen inválidas.' ||
         e?.message === 'No se pudo preparar la imagen.'
-      setShutterStatus(
+      setError(
         isBrowser
-          ? 'Edge no pudo generar el archivo desde el lienzo. Actualice Edge, desactive ahorro extremo de energía para este sitio, o escriba el código abajo y pulse Continuar.'
-          : 'No se pudo guardar la imagen. Intente de nuevo o use el teclado.',
+          ? 'Este navegador no generó la imagen. Pruebe otro navegador o recargue.'
+          : e?.message || 'No se pudo capturar la foto. Intente de nuevo.',
       )
-      setShutterBusy(false)
-      const ok = await restartDecodeRef.current()
-      if (!ok)
-        setError('No se pudo reactivar la cámara. Pulse «Reintentar escaneo».')
-      return
-    }
-
-    setShutterStatus('Buscando código de barras en la foto…')
-
-    try {
-      const result = reader.decodeFromCanvas(canvas)
-      const decoded = result.getText()
-      if (!decoded) throw new Error('empty')
-      lockedRef.current = true
-      setLastRead(decoded)
-      setStalePhotoBlob(null)
-      setShutterStatus('Código leído correctamente.')
-      setPhase('detected')
-      stopCamera(video)
-      setPhase('done')
-      onCaptureRef.current({ barcodeText: decoded, imageBlob: blob })
-    } catch {
-      setStalePhotoBlob(blob)
-      setShutterStatus('')
-      setShutterHint(
-        'No se leyó el código en esta foto. Escriba el número abajo y pulse Continuar (se enviará esta imagen), o pulse «Otra foto».',
-      )
-      setPhase('scanning')
-      const ok = await restartDecodeRef.current()
-      if (!ok) {
-        setError(
-          'Foto guardada, pero la cámara no se reactivó. Pulse «Continuar» con el código escrito, o recargue la página.',
-        )
-      }
     } finally {
-      setShutterBusy(false)
+      setCaptureBusy(false)
     }
-  }, [busy, shutterBusy])
+  }, [busy, captureBusy])
 
-  const discardStalePhoto = useCallback(async () => {
-    setStalePhotoBlob(null)
-    setShutterHint('')
-    setShutterStatus('')
-    const ok = await restartDecodeRef.current()
-    if (!ok)
-      setError('No se pudo reactivar la cámara. Use «Reintentar escaneo».')
-  }, [])
-
-  async function submitManual() {
+  const submitManual = useCallback(async () => {
     const code = manualCode.trim()
-    if (!code || busy || lockedRef.current) return
-    lockedRef.current = true
-    scanControlsRef.current?.stop()
-    scanControlsRef.current = null
-    const v = videoRef.current
+    if (!code || busy || manualBusy || captureBusy) return
+    setManualBusy(true)
     setError('')
-    setPhase('detected')
-    setLastRead(code)
-    setShutterHint('')
-    setShutterStatus('')
     try {
+      const video = videoRef.current
       let blob
-      if (stalePhotoBlob) {
-        blob = stalePhotoBlob
-        setStalePhotoBlob(null)
-      } else if (v?.srcObject && v.videoWidth > 0) {
-        blob = await captureFrameBlob(v)
+      if (video?.srcObject && video.videoWidth > 0) {
+        try {
+          await playVideo(video)
+          await new Promise((r) => requestAnimationFrame(r))
+          blob = await captureFrameBlob(video)
+        } catch {
+          blob = await manualPlaceholderBlob(code)
+        }
       } else {
         blob = await manualPlaceholderBlob(code)
       }
-      stopCamera(v)
+      stopCamera(videoRef.current)
       setPhase('done')
       onCaptureRef.current({ barcodeText: code, imageBlob: blob })
     } catch (e) {
-      lockedRef.current = false
-      setPhase('error')
-      setError(e?.message || 'No se pudo enviar el código manual.')
+      setError(e?.message || 'No se pudo enviar.')
+    } finally {
+      setManualBusy(false)
     }
-  }
+  }, [busy, manualBusy, captureBusy, manualCode])
 
-  const showOverlay = phase === 'scanning' || phase === 'detected'
-  const scanning = phase === 'scanning'
-  /** No usar lockedRef aquí: no provoca re-render y el botón podría quedar oculto de forma incoherente */
-  const showShutter = scanning && cameraReady && !busy
+  const live = phase === 'live'
+  const starting = phase === 'starting'
+  const failedOpen = phase === 'error'
+  const done = phase === 'done'
+  const showCapture = live && cameraReady && !busy && !captureBusy && !manualBusy
+  const showManual =
+    showManualEntry && (live || failedOpen) && !done && !busy && !captureBusy
+
+  const tips = visualVariant ? CONTEXT_TIPS[visualVariant] : null
 
   return (
     <div className="camera-scanner">
-      <h2 className="camera-scanner__title">{title}</h2>
-      <p className="camera-scanner__hint">{instruction}</p>
+      <header className="camera-scanner__head">
+        <ScannerVisualBadge variant={visualVariant} />
+        <h2 className="camera-scanner__title">{title}</h2>
+        <p className="camera-scanner__hint">{instruction}</p>
+      </header>
+
+      {tips ? (
+        <ul className="camera-scanner__tips" aria-label="Consejos para esta captura">
+          {tips.map((tip) => (
+            <li key={tip.head} className="camera-scanner__tip">
+              <span className="camera-scanner__tip-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
+                  <path
+                    d="M12 3v1M5.6 5.6l.7.7M3 12h1M5.6 18.4l.7-.7M12 21v-1M18.4 18.4l-.7-.7M21 12h-1M18.4 5.6l-.7.7"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              </span>
+              <span>
+                <strong>{tip.head}</strong>
+                <span>{tip.body}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className="camera-scanner__toolbar" aria-live="polite">
-        {phase === 'starting' && (
+        {starting && (
           <span className="camera-scanner__pill camera-scanner__pill--wait">
-            Iniciando cámara…
+            Preparando cámara…
           </span>
         )}
-        {scanning && !cameraReady && (
+        {live && !cameraReady && (
           <span className="camera-scanner__pill camera-scanner__pill--wait">
-            Esperando imagen de la cámara…
+            Conectando cámara…
           </span>
         )}
-        {scanning && cameraReady && shutterBusy && (
+        {live && cameraReady && captureBusy && (
           <span className="camera-scanner__pill camera-scanner__pill--wait">
-            Procesando captura…
+            Capturando…
           </span>
         )}
-        {scanning && cameraReady && !shutterBusy && (
+        {live && cameraReady && !captureBusy && !manualBusy && (
           <span className="camera-scanner__pill camera-scanner__pill--live">
             <span className="camera-scanner__dot" aria-hidden />
-            Escaneando — o capture usted la foto
+            Cámara lista
           </span>
         )}
-        {phase === 'detected' && (
-          <span className="camera-scanner__pill camera-scanner__pill--ok">
-            Código detectado — capturando foto…
+        {manualBusy && (
+          <span className="camera-scanner__pill camera-scanner__pill--wait">
+            Enviando código…
           </span>
         )}
-        {phase === 'done' && (
+        {done && (
           <span className="camera-scanner__pill camera-scanner__pill--ok">
-            Listo — enviando al servidor…
+            Enviando…
           </span>
         )}
       </div>
@@ -645,89 +521,49 @@ export function CameraScanner({
         <video
           ref={videoRef}
           className="camera-scanner__video"
+          autoPlay
           playsInline
           muted
-          aria-label="Vista de cámara para escanear código"
+          aria-label="Vista de la cámara"
+          onLoadedMetadata={(e) => {
+            void playVideo(e.currentTarget)
+          }}
           onLoadedData={() => setCameraReady(true)}
           onPlaying={() => setCameraReady(true)}
         />
-        {showOverlay && (
+        {(live || starting) && (
           <div className="camera-scanner__overlay" aria-hidden>
             <span className="camera-scanner__corners" />
-            {scanning && <span className="camera-scanner__scanline" />}
           </div>
         )}
       </div>
 
-      {showShutter && (
+      {showCapture && (
         <div className="camera-scanner__shutter-row">
           <button
             type="button"
             className="btn btn--primary camera-scanner__shutter-btn"
-            disabled={shutterBusy}
-            aria-busy={shutterBusy}
-            onClick={() => void handleManualShutter()}
+            onClick={() => void handleCapture()}
           >
-            {shutterBusy ? 'Procesando…' : 'Capturar foto y leer código'}
+            Capturar y enviar foto
           </button>
           <p className="camera-scanner__shutter-help">
-            Congela el fotograma cuando vea el código nítido; muchas veces lee mejor
-            que el video en movimiento.
+            Se enviará la imagen al servidor. Si la cámara falla, use el código debajo.
           </p>
         </div>
       )}
 
-      {stalePhotoBlob && scanning && (
-        <div className="camera-scanner__stale-banner" role="status">
-          <strong>Foto guardada.</strong> Escriba el código y pulse Continuar, o descarte
-          para seguir probando.
-          <button
-            type="button"
-            className="btn btn--ghost camera-scanner__stale-discard"
-            onClick={() => void discardStalePhoto()}
-          >
-            Otra foto
-          </button>
-        </div>
-      )}
-
-      {shutterStatus && (
+      {statusLine && (
         <p className="camera-scanner__shutter-status" role="status" aria-live="polite">
-          {shutterStatus}
+          {statusLine}
         </p>
       )}
 
-      {shutterHint && (
-        <p className="camera-scanner__shutter-hint" role="status">
-          {shutterHint}
-        </p>
-      )}
-
-      {scanning && (
-        <p className="camera-scanner__tips">
-          <span className="camera-scanner__tips-label">Sugerencia: </span>
-          {SCAN_TIPS[tipIdx]}
-        </p>
-      )}
-
-      {lastRead && (phase === 'detected' || phase === 'done') && (
-        <p className="camera-scanner__readout" aria-live="assertive">
-          <span className="camera-scanner__readout-label">Leído: </span>
-          <code className="camera-scanner__readout-code">{lastRead}</code>
-        </p>
-      )}
-
-      {error && (
-        <p className="camera-scanner__status camera-scanner__status--err" role="alert">
-          {error}
-        </p>
-      )}
-
-      {showManualEntry && (phase === 'scanning' || phase === 'error') && (
+      {showManual && (
         <div className="camera-scanner__manual">
-          <p className="camera-scanner__manual-title">¿No lo lee la cámara?</p>
+          <p className="camera-scanner__manual-title">{manualSectionTitle}</p>
           <label className="camera-scanner__manual-label" htmlFor="manual-barcode">
-            Escriba el número del código de barras
+            {manualEntryLabel}
           </label>
           <div className="camera-scanner__manual-row">
             <input
@@ -736,20 +572,26 @@ export function CameraScanner({
               className="camera-scanner__manual-input"
               value={manualCode}
               onChange={(e) => setManualCode(e.target.value)}
-              placeholder="Ej. números bajo las barras"
+              placeholder=""
               autoComplete="off"
-              disabled={busy}
+              disabled={busy || manualBusy}
             />
             <button
               type="button"
               className="btn btn--secondary camera-scanner__manual-btn"
-              disabled={busy || !manualCode.trim()}
+              disabled={busy || manualBusy || !manualCode.trim()}
               onClick={() => void submitManual()}
             >
               Continuar
             </button>
           </div>
         </div>
+      )}
+
+      {error && (
+        <p className="camera-scanner__status camera-scanner__status--err" role="alert">
+          {error}
+        </p>
       )}
     </div>
   )

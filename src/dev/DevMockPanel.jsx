@@ -66,8 +66,11 @@ export function DevMockPanel({
         <div className="dev-mock__panel" role="dialog" aria-label="Simulación API">
           <h3 className="dev-mock__title">API simulada</h3>
           <p className="dev-mock__hint">
-            Sin backend Python: las llamadas usan respuestas de prueba. En consola
-            verá <code>[mock API]</code> con los datos enviados.
+            Sin backend Python: las llamadas usan respuestas de prueba. En consola del
+            navegador verá <code>[mock API]</code> con el tamaño del <code>Blob</code>.
+            Para comprobar el <strong>multipart por HTTP</strong>, desactive esta
+            simulación y ejecute <code>npm run echo-api</code> (puerto 4010); el log
+            sale en la terminal de Node.
           </p>
 
           <label className="dev-mock__row">
