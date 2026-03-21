@@ -1,4 +1,12 @@
-# React + Vite
+# Sistema de Autopréstamos — Frontend (UNAPEC)
+
+Cliente React (Vite) para autopréstamos en biblioteca con integración Koha vía API backend.
+
+**Documentación técnica detallada (flujos, API, mock, escáner):** ver [`DOCUMENTACION.md`](./DOCUMENTACION.md).
+
+---
+
+## React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
