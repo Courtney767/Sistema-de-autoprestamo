@@ -1,28 +1,37 @@
-# Sistema de Autopréstamos — Frontend (UNAPEC)
+# Autopréstamos — Frontend (UNAPEC)
 
-Cliente React (Vite) para autopréstamos en biblioteca con integración Koha vía API backend.
+Aplicación web (React + Vite) para el flujo de **autopréstamos** en biblioteca: escaneo de carnet, sesión vinculada a Koha y escaneo del ejemplar. La lógica de negocio y la integración con Koha viven en un **backend** aparte; este repo es solo el cliente.
 
-**Documentación técnica detallada (flujos, API, mock, escáner):** ver [`DOCUMENTACION.md`](./DOCUMENTACION.md).
+## Requisitos
 
----
+- Node.js (LTS recomendado)
+- npm
 
-## React + Vite
+## Instalación y uso
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+```bash
+npm install
+npm run dev
+```
+
+En desarrollo, las peticiones a `/api` se envían por proxy a `http://127.0.0.1:4000` (configurable en `vite.config.js`).
+
+| Script | Descripción |
+|--------|-------------|
+| `npm run dev` | Servidor de desarrollo con recarga en caliente |
+| `npm run build` | Compilación para producción (`dist/`) |
+| `npm run preview` | Sirve el build localmente |
+| `npm run lint` | ESLint |
+
+## Variables de entorno
+
+Crear `.env.local` en la raíz si hace falta (prefijo `VITE_`):
+
+- `VITE_API_BASE_URL` — URL base del API (opcional; si está vacío se usan rutas `/api/...`).
+- `VITE_USE_MOCK_API=true` — En desarrollo, fuerza respuestas simuladas sin backend.
+
+Detalle de endpoints, mock y flujo de pantallas: **[DOCUMENTACION.md](./DOCUMENTACION.md)**.
 
 ## Logotipo UNAPEC
 
-El archivo `public/unapec-logo.png` es el logo institucional publicado en [Wikimedia Commons — LOGO UNAPEC.png](https://commons.wikimedia.org/wiki/File:LOGO_UNAPEC.png), licencia [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Atribución: Universidad APEC / UNAPEC; archivo subido por la comunidad de Commons.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+El archivo `public/unapec-logo.png` proviene de [Wikimedia Commons — LOGO UNAPEC.png](https://commons.wikimedia.org/wiki/File:LOGO_UNAPEC.png), licencia [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Atribución: Universidad APEC / UNAPEC; archivo subido por la comunidad de Commons.
