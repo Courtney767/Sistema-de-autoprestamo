@@ -1,0 +1,28 @@
+.unapec-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.unapec-logo__img {
+  display: block;
+  width: 100%;
+  max-width: min(400px, 100%);
+  height: auto;
+  max-height: 72px;
+  object-fit: contain;
+  object-position: center;
+}
+
+@media (min-width: 640px) {
+  .unapec-logo {
+    justify-content: flex-end;
+  }
+
+  .unapec-logo__img {
+    max-width: 100%;
+    max-height: 64px;
+  }
+}
