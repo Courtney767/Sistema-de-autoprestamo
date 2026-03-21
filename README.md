@@ -7,7 +7,7 @@ Aplicación web (React + Vite) para el flujo de **autopréstamos** en biblioteca
 - Node.js **20.19+** o **22.12+** (requerido por Vite 8; en Vercel se respeta `engines` en `package.json`)
 - npm
 
-## Instalación y uso
+## Instalación y uso.
 
 ```bash
 npm install
