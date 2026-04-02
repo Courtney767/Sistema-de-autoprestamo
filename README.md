@@ -2,7 +2,7 @@
 
 Aplicación web (React + Vite) para el flujo de **autopréstamos** en biblioteca: captura de **foto** del carnet y del ejemplar (el servidor interpreta la imagen). La lógica de negocio y la integración con Koha viven en un **backend** aparte; este repo es solo el cliente.
 
-## Requisitos
+## Requisitos.
 
 - Node.js **20.19+** o **22.12+** (requerido por Vite 8; en Vercel se respeta `engines` en `package.json`)
 - npm
