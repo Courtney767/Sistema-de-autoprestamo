@@ -74,7 +74,7 @@ function App() {
     const id = requestAnimationFrame(() => {
       apiErrorBannerRef.current?.scrollIntoView({
         behavior: 'smooth',
-        block: 'center',
+        block: 'nearest',
       })
     })
     return () => cancelAnimationFrame(id)
@@ -107,11 +107,9 @@ function App() {
             title: 'No se pudo verificar el carnet',
             detail: data.message || 'Revise los datos o consulte en biblioteca.',
           })
-          setCardScanKey((k) => k + 1)
         }
       } catch (e) {
         setCardError(getUserFacingApiError(e, 'carnet'))
-        setCardScanKey((k) => k + 1)
       } finally {
         setLoading(false)
       }
@@ -134,7 +132,6 @@ function App() {
         setStep(STEPS.RESULTADO_LIBRO)
       } catch (e) {
         setBookError(getUserFacingApiError(e, 'libro'))
-        setBookScanKey((k) => k + 1)
       } finally {
         setLoading(false)
       }
@@ -218,7 +215,7 @@ function App() {
             <CameraScanner
               key={cardScanKey}
               title="Identificación"
-              instruction="Encuadre el carnet y pulse «Capturar y enviar foto». El servidor procesará la imagen."
+              instruction="Encuadre el carnet en el marco. Tras capturar podrá revisar la foto y enviarla. La captura automática también puede dispararse sola; en cualquier momento puede usar «Capturar foto»."
               manualSectionTitle="¿Sin cámara o no se ve el carnet?"
               manualEntryLabel="Escriba el número o código de su carnet y pulse Continuar"
               visualVariant="carnet"
@@ -273,7 +270,7 @@ function App() {
             <CameraScanner
               key={bookScanKey}
               title="Ejemplar"
-              instruction="Encuadre el libro o el código del ejemplar y pulse «Capturar y enviar foto»."
+              instruction="Encuadre el libro o el código del ejemplar. Tras capturar podrá revisar la foto y enviarla; también hay captura automática o el botón «Capturar foto»."
               manualSectionTitle="¿Sin cámara o no se ve el código del libro?"
               manualEntryLabel="Escriba el código de barras o inventario del ejemplar y pulse Continuar"
               visualVariant="libro"
