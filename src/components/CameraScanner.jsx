@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState, startTransition } from 'react'
+import {
+  endUserCameraErrorMessage,
+  logMediaDiagnostic,
+} from '../lib/cameraDiagnostics.js'
 
 const VIDEO_CONSTRAINTS = {
   video: {
@@ -21,9 +25,7 @@ function evenDimension(n) {
  */
 async function openCameraStream() {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-    const err = new Error(
-      'La cámara requiere HTTPS o http://localhost. Si abre por IP (http://192…), el navegador la bloquea.'
-    )
+    const err = new Error('getUserMedia no disponible en este contexto')
     err.name = 'NotSupportedError'
     throw err
   }
@@ -455,18 +457,8 @@ export function CameraScanner({
       } catch (e) {
         if (cancelled) return
         stopCamera(videoRef.current)
-        const msg =
-          e?.name === 'NotAllowedError'
-            ? 'Permita el acceso a la cámara en el navegador.'
-            : e?.name === 'NotFoundError'
-              ? 'No se detectó ninguna cámara. Compruebe que esté conectada y activa en el sistema (p. ej. libcamera en Raspberry Pi).'
-              : e?.name === 'NotReadableError' || e?.name === 'TrackStartError'
-                ? 'La cámara está en uso o el sistema no la entrega al navegador. Cierre otras apps y, en Raspberry Pi, ejecute `sudo raspi-config` → Interfaces → Camera (o pruebe otro perfil de cámara).'
-                : e?.name === 'SecurityError' || e?.name === 'NotSupportedError'
-                  ? 'Use HTTPS o abra la app en http://127.0.0.1 (el navegador bloquea la cámara en http:// con otra IP o nombre de host).'
-                  : e?.message ||
-                    'No se pudo abrir la cámara. Revise permisos o cierre otras apps que la usen.'
-        setError(msg)
+        void logMediaDiagnostic(e, { origin: 'CameraScanner.open' })
+        setError(endUserCameraErrorMessage(e))
         setPhase('error')
       }
     })()
@@ -553,14 +545,15 @@ export function CameraScanner({
       })
       setPhase('preview')
     } catch (e) {
+      void logMediaDiagnostic(e, { origin: 'CameraScanner.captureFrame' })
       const isBrowser =
         e?.message === 'CANVAS_BLOB_FAILED' ||
         e?.message === 'Dimensiones de imagen inválidas.' ||
         e?.message === 'No se pudo preparar la imagen.'
       setError(
         isBrowser
-          ? 'Este navegador no generó la imagen. Pruebe otro navegador o recargue.'
-          : e?.message || 'No se pudo capturar la foto. Intente de nuevo.',
+          ? 'No se pudo generar la imagen en este navegador. Pruebe a recargar la página o use otro navegador.'
+          : 'No se pudo tomar la foto. Intente de nuevo.',
       )
     } finally {
       setCaptureBusy(false)
@@ -649,7 +642,8 @@ export function CameraScanner({
       setPhase('done')
       onCaptureRef.current({ barcodeText: code, imageBlob: blob })
     } catch (e) {
-      setError(e?.message || 'No se pudo preparar la imagen.')
+      void logMediaDiagnostic(e, { origin: 'CameraScanner.manualPlaceholder' })
+      setError('No se pudo preparar el envío. Intente de nuevo.')
     } finally {
       setManualBusy(false)
     }
