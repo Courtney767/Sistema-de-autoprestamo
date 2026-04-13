@@ -15,11 +15,42 @@ function evenDimension(n) {
   return x - (x % 2)
 }
 
+/**
+ * Varias escaleras de restricciones: móviles (facingMode + HD), escritorio y
+ * Raspberry Pi (CSI v2 / libcamera + Chromium suelen rechazar facingMode o mins).
+ */
 async function openCameraStream() {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    const err = new Error(
+      'La cámara requiere HTTPS o http://localhost. Si abre por IP (http://192…), el navegador la bloquea.'
+    )
+    err.name = 'NotSupportedError'
+    throw err
+  }
+
   const attempts = [
     () => navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS),
+    () =>
+      navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+        },
+      }),
+    () =>
+      navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+      }),
+    () =>
+      navigator.mediaDevices.getUserMedia({
+        video: { width: { max: 1280 }, height: { max: 720 } },
+      }),
     () => navigator.mediaDevices.getUserMedia({ video: true }),
   ]
+
   let lastErr
   for (const fn of attempts) {
     try {
@@ -28,6 +59,23 @@ async function openCameraStream() {
       lastErr = e
     }
   }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const inputs = devices.filter((d) => d.kind === 'videoinput' && d.deviceId)
+    for (const { deviceId } of inputs) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { ideal: deviceId } },
+        })
+      } catch (e) {
+        lastErr = e
+      }
+    }
+  } catch (e) {
+    lastErr = lastErr || e
+  }
+
   throw lastErr
 }
 
@@ -410,8 +458,14 @@ export function CameraScanner({
         const msg =
           e?.name === 'NotAllowedError'
             ? 'Permita el acceso a la cámara en el navegador.'
-            : e?.message ||
-              'No se pudo abrir la cámara. Revise permisos o cierre otras apps que la usen.'
+            : e?.name === 'NotFoundError'
+              ? 'No se detectó ninguna cámara. Compruebe que esté conectada y activa en el sistema (p. ej. libcamera en Raspberry Pi).'
+              : e?.name === 'NotReadableError' || e?.name === 'TrackStartError'
+                ? 'La cámara está en uso o el sistema no la entrega al navegador. Cierre otras apps y, en Raspberry Pi, ejecute `sudo raspi-config` → Interfaces → Camera (o pruebe otro perfil de cámara).'
+                : e?.name === 'SecurityError' || e?.name === 'NotSupportedError'
+                  ? 'Use HTTPS o abra la app en http://127.0.0.1 (el navegador bloquea la cámara en http:// con otra IP o nombre de host).'
+                  : e?.message ||
+                    'No se pudo abrir la cámara. Revise permisos o cierre otras apps que la usen.'
         setError(msg)
         setPhase('error')
       }
