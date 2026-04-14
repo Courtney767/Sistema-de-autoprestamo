@@ -1,4 +1,4 @@
-.# Autopréstamos — Frontend (UNAPEC)
+..# Autopréstamos — Frontend (UNAPEC)
 
 Aplicación web (React + Vite) para el flujo de **autopréstamos** en biblioteca: captura de **foto** del carnet y del ejemplar (el servidor interpreta la imagen). La lógica de negocio y la integración con Koha viven en un **backend** aparte; este repo es solo el cliente.
 
