@@ -15,6 +15,14 @@ export const MOCK_SCENARIOS = [
  * - VITE_USE_MOCK_API=true, o
  * - sessionStorage autoprestamos_use_mock === '1'
  */
+/**
+ * Demo con datos fijos (carnet + libro por códigos). Útil en producción sin backend.
+ * Build con VITE_STATIC_LOAN_DEMO=true
+ */
+export function isStaticLoanDemoEnabled() {
+  return import.meta.env.VITE_STATIC_LOAN_DEMO === 'true'
+}
+
 export function isMockApiEnabled() {
   if (import.meta.env.PROD) return false
   if (import.meta.env.VITE_USE_MOCK_API === 'true') return true

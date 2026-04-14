@@ -25,16 +25,23 @@ function snapshotMediaDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) {
     return Promise.resolve({ enumerateDevices: 'no disponible' })
   }
-  return navigator.mediaDevices.enumerateDevices().then((list) => ({
-    total: list.length,
-    videoinput: list.filter((d) => d.kind === 'videoinput').length,
-    devices: list.map((d) => ({
-      kind: d.kind,
-      label: d.label || '(vacío hasta que haya permiso de cámara/micrófono)',
-      deviceId: d.deviceId || '(vacío)',
-      groupId: d.groupId || '',
-    })),
-  }))
+  return navigator.mediaDevices.enumerateDevices().then((list) => {
+    const kinds = {}
+    for (const d of list) {
+      kinds[d.kind] = (kinds[d.kind] || 0) + 1
+    }
+    return {
+      total: list.length,
+      videoinput: list.filter((d) => d.kind === 'videoinput').length,
+      kinds,
+      devices: list.map((d) => ({
+        kind: d.kind,
+        label: d.label || '(vacío hasta que haya permiso de cámara/micrófono)',
+        deviceId: d.deviceId || '(vacío)',
+        groupId: d.groupId || '',
+      })),
+    }
+  })
 }
 
 /**
@@ -120,10 +127,24 @@ export async function probeCameraInConsole() {
   console.log('Entorno', {
     isSecureContext: report.isSecureContext,
     href: report.href,
+    userAgent: report.userAgent,
   })
   console.log('Dispositivos (antes de pruebas)', report.enumerateBefore)
   console.table(report.getUserMediaAttempts)
   console.log('Dispositivos (después de pruebas)', report.enumerateAfter)
+
+  const after = report.enumerateAfter
+  if (after?.videoinput === 0) {
+    console.warn(
+      '[Sistema cámara] Conclusión: el navegador enumera 0 dispositivos «videoinput». ' +
+        'No es un fallo de la aplicación web. Si `rpicam-hello` sí muestra imagen, libcamera está bien; Chromium suele necesitar otra ruta (V4L2/PipeWire). ' +
+        'En Raspberry Pi OS: en Chromium abra chrome://flags, busque «PipeWire Camera», póngalo en Disabled, reinicie el navegador. ' +
+        'Revise también `v4l2-ctl --list-devices` y que el usuario pertenezca al grupo `video`.',
+    )
+    if (after.kinds && Object.keys(after.kinds).length) {
+      console.warn('[Sistema cámara] Tipos detectados (sin cámara):', after.kinds)
+    }
+  }
   console.groupEnd()
   return report
 }

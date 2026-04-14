@@ -12,7 +12,11 @@
  */
 
 import { mockValidarCarnet, mockValidarLibro } from './mockLoansApi.js'
-import { isMockApiEnabled } from './mockConfig.js'
+import { isMockApiEnabled, isStaticLoanDemoEnabled } from './mockConfig.js'
+import {
+  staticLoanDemoValidarCarnet,
+  staticLoanDemoValidarLibro,
+} from './staticLoanDemo.js'
 
 function apiUrl(path) {
   const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
@@ -37,6 +41,9 @@ async function parseJsonResponse(res) {
 export async function validarCarnet({ imageBlob, codigoBarras, signal }) {
   if (isMockApiEnabled()) {
     return mockValidarCarnet({ imageBlob, codigoBarras, signal })
+  }
+  if (isStaticLoanDemoEnabled()) {
+    return staticLoanDemoValidarCarnet({ codigoBarras, signal })
   }
 
   const fd = new FormData()
@@ -72,6 +79,13 @@ export async function validarLibro({
   if (isMockApiEnabled()) {
     return mockValidarLibro({
       imageBlob,
+      codigoBarras,
+      sessionToken,
+      signal,
+    })
+  }
+  if (isStaticLoanDemoEnabled()) {
+    return staticLoanDemoValidarLibro({
       codigoBarras,
       sessionToken,
       signal,
